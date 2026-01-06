@@ -104,7 +104,7 @@ type Resolver = "google" | "cloudflare";
 export default function DnsMonitor() {
   const domain = useSignal("");
   const resolver = useSignal<Resolver>("google");
-  const dnssecValidation = useSignal(false);
+  const dnssecValidation = useSignal(true);
   const isLoading = useSignal(false);
   const result = useSignal<DnsResult | null>(null);
   const error = useSignal<string | null>(null);
@@ -243,15 +243,31 @@ export default function DnsMonitor() {
               <option value="cloudflare">Cloudflare</option>
             </select>
           </div>
-          <label class="flex items-center gap-2 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={dnssecValidation.value}
-              onChange={(e) => (dnssecValidation.value = (e.target as HTMLInputElement).checked)}
-              class="w-4 h-4 text-blue-600 border-[#ddd] rounded focus:ring-blue-500"
-            />
-            <span class="text-xs text-[#666]">DNSSEC Validation</span>
-          </label>
+          <div class="flex items-center gap-2">
+            <label class="text-xs text-[#666]">DNSSEC</label>
+            <div class="flex rounded-md overflow-hidden border border-[#ddd]">
+              <label class={`px-3 py-1.5 text-xs cursor-pointer transition-colors ${!dnssecValidation.value ? "bg-blue-600 text-white" : "bg-white text-[#666] hover:bg-[#f5f5f5]"}`}>
+                <input
+                  type="radio"
+                  name="dnssec"
+                  checked={!dnssecValidation.value}
+                  onChange={() => (dnssecValidation.value = false)}
+                  class="sr-only"
+                />
+                Off
+              </label>
+              <label class={`px-3 py-1.5 text-xs cursor-pointer transition-colors border-l border-[#ddd] ${dnssecValidation.value ? "bg-blue-600 text-white" : "bg-white text-[#666] hover:bg-[#f5f5f5]"}`}>
+                <input
+                  type="radio"
+                  name="dnssec"
+                  checked={dnssecValidation.value}
+                  onChange={() => (dnssecValidation.value = true)}
+                  class="sr-only"
+                />
+                On
+              </label>
+            </div>
+          </div>
         </div>
       </div>
 
