@@ -283,88 +283,45 @@ export const handler = define.handlers({
       "google._domainkey",
     ]);
 
-    const recordsByCategory: Record<
-      string,
-      { subdomain: string; type: string; records: DnsRecord[] }[]
-    > = {
-      root: [],
-      common: [],
-      mail: [],
-      microsoft: [],
-      security: [],
-    };
+    // Flatten all records with subdomain as name
+    const allRecords: Array<{ name: string; type: string; value: string | object; ttl: number }> = [];
 
     for (const result of results) {
       if (result.records.length === 0) continue;
 
       // Filter out wildcard matches for applicable subdomains
       let filteredRecords = result.records;
-      if (
-        wildcard.hasWildcard &&
-        wildcardFilteredSubdomains.has(result.subdomain)
-      ) {
-        filteredRecords = result.records.filter(
-          (r) => !isWildcardResult(r, wildcard)
-        );
+      if (wildcard.hasWildcard && wildcardFilteredSubdomains.has(result.subdomain)) {
+        filteredRecords = result.records.filter((r) => !isWildcardResult(r, wildcard));
       }
 
-      if (filteredRecords.length === 0) continue;
-
-      const entry = {
-        subdomain: result.subdomain,
-        type: result.type,
-        records: filteredRecords,
-      };
-
-      if (result.subdomain === "@") {
-        recordsByCategory.root.push(entry);
-      } else if (["www", "ftp"].includes(result.subdomain)) {
-        recordsByCategory.common.push(entry);
-      } else if (
-        ["mail", "smtp", "pop", "imap", "webmail", "_dmarc"].includes(
-          result.subdomain
-        ) ||
-        result.subdomain.includes("_domainkey") ||
-        result.subdomain.includes("_dkim")
-      ) {
-        recordsByCategory.mail.push(entry);
-      } else if (
-        [
-          "autodiscover",
-          "lyncdiscover",
-          "sip",
-          "enterpriseregistration",
-          "enterpriseenrollment",
-          "_sipfederationtls._tcp",
-          "_sip._tls",
-        ].includes(result.subdomain)
-      ) {
-        recordsByCategory.microsoft.push(entry);
-      } else if (
-        ["autoconfig", "_mta-sts", "_smtp._tls"].includes(result.subdomain)
-      ) {
-        recordsByCategory.security.push(entry);
-      } else {
-        recordsByCategory.common.push(entry);
+      for (const record of filteredRecords) {
+        allRecords.push({
+          name: result.subdomain,
+          type: record.type,
+          value: record.value,
+          ttl: record.ttl,
+        });
       }
     }
 
+    // Sort: @ first, then alphabetically by name, then by type
+    allRecords.sort((a, b) => {
+      if (a.name === "@" && b.name !== "@") return -1;
+      if (a.name !== "@" && b.name === "@") return 1;
+      if (a.name !== b.name) return a.name.localeCompare(b.name);
+      return a.type.localeCompare(b.type);
+    });
+
     const endTime = performance.now();
     const queryTime = Math.round(endTime - startTime);
-
-    // Count total records from categorized results
-    const totalRecords = Object.values(recordsByCategory).reduce(
-      (sum, category) =>
-        sum + category.reduce((catSum, group) => catSum + group.records.length, 0),
-      0
-    );
 
     return Response.json({
       success: true,
       domain: cleanDomain,
       queryTime,
-      categories: recordsByCategory,
-      totalRecords,
+      records: allRecords,
+      totalRecords: allRecords.length,
       ...(wildcard.hasWildcard && {
         wildcard: {
           detected: true,

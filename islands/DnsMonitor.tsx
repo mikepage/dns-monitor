@@ -12,7 +12,6 @@ function CopyButton({ text, id }: { text: string; id: string }) {
         if (copiedId.value === id) copiedId.value = null;
       }, 2000);
     } catch {
-      // Fallback for older browsers
       const textarea = document.createElement("textarea");
       textarea.value = text;
       document.body.appendChild(textarea);
@@ -35,32 +34,12 @@ function CopyButton({ text, id }: { text: string; id: string }) {
       title={isCopied ? "Copied!" : "Copy to clipboard"}
     >
       {isCopied ? (
-        <svg
-          class="w-4 h-4 text-green-600"
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width="2"
-            d="M5 13l4 4L19 7"
-          />
+        <svg class="w-4 h-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
         </svg>
       ) : (
-        <svg
-          class="w-4 h-4 text-[#999] hover:text-[#666]"
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width="2"
-            d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
-          />
+        <svg class="w-4 h-4 text-[#999] hover:text-[#666]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
         </svg>
       )}
     </button>
@@ -74,11 +53,16 @@ interface DnsRecord {
   value: string | object;
 }
 
-interface RecordGroup {
-  subdomain: string;
-  type: string;
-  records: DnsRecord[];
-}
+const TYPE_COLORS: Record<string, { bg: string; text: string }> = {
+  A: { bg: "bg-blue-100", text: "text-blue-700" },
+  AAAA: { bg: "bg-indigo-100", text: "text-indigo-700" },
+  CNAME: { bg: "bg-purple-100", text: "text-purple-700" },
+  MX: { bg: "bg-orange-100", text: "text-orange-700" },
+  TXT: { bg: "bg-green-100", text: "text-green-700" },
+  NS: { bg: "bg-cyan-100", text: "text-cyan-700" },
+  SOA: { bg: "bg-slate-200", text: "text-slate-700" },
+  SRV: { bg: "bg-pink-100", text: "text-pink-700" },
+};
 
 interface WildcardInfo {
   detected: boolean;
@@ -90,33 +74,9 @@ interface DnsResult {
   domain: string;
   queryTime: number;
   totalRecords: number;
-  categories: {
-    root: RecordGroup[];
-    common: RecordGroup[];
-    mail: RecordGroup[];
-    microsoft: RecordGroup[];
-    security: RecordGroup[];
-  };
+  records: DnsRecord[];
   wildcard?: WildcardInfo;
 }
-
-const CATEGORY_LABELS: Record<string, { title: string; description: string }> =
-  {
-    root: { title: "Root Domain (@)", description: "Primary domain records" },
-    common: { title: "Common Subdomains", description: "www, ftp, etc." },
-    mail: {
-      title: "Email Configuration",
-      description: "Mail servers, SPF, DKIM, DMARC",
-    },
-    microsoft: {
-      title: "Microsoft 365",
-      description: "Autodiscover, Teams, Skype for Business",
-    },
-    security: {
-      title: "Security & Standards",
-      description: "MTA-STS, TLS reporting, autoconfig",
-    },
-  };
 
 function parseHash(): string | null {
   const hash = window.location.hash;
@@ -222,54 +182,6 @@ export default function DnsMonitor() {
     return String(value);
   };
 
-  const renderCategory = (
-    categoryKey: string,
-    groups: RecordGroup[]
-  ): preact.JSX.Element | null => {
-    if (groups.length === 0) return null;
-
-    const label = CATEGORY_LABELS[categoryKey];
-
-    return (
-      <div class="bg-white rounded-lg shadow p-6 mb-4">
-        <h3 class="text-base font-medium text-[#111] mb-1">{label.title}</h3>
-        <p class="text-xs text-[#999] mb-4">{label.description}</p>
-
-        <div class="space-y-3">
-          {groups.map((group, idx) => (
-            <div key={idx} class="border border-[#eee] rounded-md">
-              <div class="px-3 py-2 bg-[#fafafa] border-b border-[#eee] flex items-center gap-2">
-                <span class="text-sm text-[#666]">
-                  {group.subdomain === "@" ? "(root)" : group.subdomain}
-                </span>
-                <span class="text-xs px-2 py-0.5 bg-[#e5e5e5] rounded text-[#666]">
-                  {group.type}
-                </span>
-              </div>
-              <div class="divide-y divide-[#eee]">
-                {group.records.map((record, ridx) => {
-                  const formattedValue = formatValue(record.value);
-                  const copyId = `${categoryKey}-${idx}-${ridx}`;
-                  return (
-                    <div key={ridx} class="px-3 py-2 flex items-center gap-2">
-                      <code class="text-sm text-[#111] break-all flex-1">
-                        {formattedValue}
-                      </code>
-                      <CopyButton text={formattedValue} id={copyId} />
-                      <span class="text-xs text-[#999] shrink-0">
-                        TTL: {record.ttl}s
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  };
-
   return (
     <div class="w-full">
       <div class="bg-white rounded-lg shadow p-6 mb-6">
@@ -278,9 +190,7 @@ export default function DnsMonitor() {
             <input
               type="text"
               value={domain.value}
-              onInput={(e) =>
-                (domain.value = (e.target as HTMLInputElement).value)
-              }
+              onInput={(e) => (domain.value = (e.target as HTMLInputElement).value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter") handleLookup();
               }}
@@ -318,9 +228,7 @@ export default function DnsMonitor() {
         <div class="bg-white rounded-lg shadow p-6 mb-6">
           <div class="flex items-center gap-3">
             <div class="w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
-            <span class="text-sm text-[#666]">
-              Scanning DNS records for {domain.value}...
-            </span>
+            <span class="text-sm text-[#666]">Scanning DNS records for {domain.value}...</span>
           </div>
         </div>
       )}
@@ -335,15 +243,11 @@ export default function DnsMonitor() {
               </div>
               <div>
                 <span class="text-xs text-[#999] block">Records Found</span>
-                <span class="text-sm text-[#111]">
-                  {result.value.totalRecords}
-                </span>
+                <span class="text-sm text-[#111]">{result.value.totalRecords}</span>
               </div>
               <div>
                 <span class="text-xs text-[#999] block">Query Time</span>
-                <span class="text-sm text-[#111]">
-                  {result.value.queryTime}ms
-                </span>
+                <span class="text-sm text-[#111]">{result.value.queryTime}ms</span>
               </div>
             </div>
           </div>
@@ -351,31 +255,16 @@ export default function DnsMonitor() {
           {result.value.wildcard && (
             <div class="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-6">
               <div class="flex items-start gap-3">
-                <svg
-                  class="w-5 h-5 text-amber-600 shrink-0 mt-0.5"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width="2"
-                    d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-                  />
+                <svg class="w-5 h-5 text-amber-600 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                 </svg>
                 <div>
-                  <p class="text-sm font-medium text-amber-800">
-                    Wildcard DNS detected
-                  </p>
+                  <p class="text-sm font-medium text-amber-800">Wildcard DNS detected</p>
                   <p class="text-xs text-amber-700 mt-1">
                     This domain has a wildcard record (*.{result.value.domain})
                     {result.value.wildcard.cname && (
                       <span>
-                        {" "}pointing to{" "}
-                        <code class="bg-amber-100 px-1 rounded">
-                          {result.value.wildcard.cname}
-                        </code>
+                        {" "}pointing to <code class="bg-amber-100 px-1 rounded">{result.value.wildcard.cname}</code>
                       </span>
                     )}
                     . False positive subdomain records have been filtered out.
@@ -385,17 +274,42 @@ export default function DnsMonitor() {
             </div>
           )}
 
-          {renderCategory("root", result.value.categories.root)}
-          {renderCategory("common", result.value.categories.common)}
-          {renderCategory("mail", result.value.categories.mail)}
-          {renderCategory("microsoft", result.value.categories.microsoft)}
-          {renderCategory("security", result.value.categories.security)}
-
-          {result.value.totalRecords === 0 && (
+          {result.value.records.length > 0 ? (
+            <div class="bg-white rounded-lg shadow overflow-hidden">
+              <table class="w-full text-sm">
+                <thead>
+                  <tr class="border-b border-[#eee] bg-[#fafafa]">
+                    <th class="text-left px-4 py-3 text-xs font-medium text-[#666] uppercase tracking-wider">Name</th>
+                    <th class="text-left px-4 py-3 text-xs font-medium text-[#666] uppercase tracking-wider">Type</th>
+                    <th class="text-left px-4 py-3 text-xs font-medium text-[#666] uppercase tracking-wider">Value</th>
+                    <th class="text-right px-4 py-3 text-xs font-medium text-[#666] uppercase tracking-wider">TTL</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-[#eee]">
+                  {result.value.records.map((record, idx) => {
+                    const formattedValue = formatValue(record.value);
+                    return (
+                      <tr key={idx} class="hover:bg-[#fafafa]">
+                        <td class="px-4 py-3 text-[#111]">{record.name}</td>
+                        <td class="px-4 py-3">
+                          <span class={`text-xs px-2 py-0.5 rounded ${TYPE_COLORS[record.type]?.bg ?? "bg-[#e5e5e5]"} ${TYPE_COLORS[record.type]?.text ?? "text-[#666]"}`}>{record.type}</span>
+                        </td>
+                        <td class="px-4 py-3">
+                          <div class="flex items-center gap-2">
+                            <code class="text-[#111] break-all flex-1">{formattedValue}</code>
+                            <CopyButton text={formattedValue} id={`record-${idx}`} />
+                          </div>
+                        </td>
+                        <td class="px-4 py-3 text-right text-[#999]">{record.ttl}s</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ) : (
             <div class="bg-white rounded-lg shadow p-6">
-              <p class="text-sm text-[#666]">
-                No DNS records found for this domain.
-              </p>
+              <p class="text-sm text-[#666]">No DNS records found for this domain.</p>
             </div>
           )}
         </>
