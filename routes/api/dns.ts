@@ -150,25 +150,8 @@ async function detectWildcard(domain: string): Promise<WildcardInfo> {
   return { hasWildcard: wildcardTargets.size > 0, wildcardTargets, wildcardCname };
 }
 
-function isWildcardResult(
-  record: DnsRecord,
-  wildcard: WildcardInfo
-): boolean {
-  if (!wildcard.hasWildcard) return false;
-
-  const value =
-    typeof record.value === "string"
-      ? record.value
-      : "exchange" in record.value
-        ? String((record.value as { exchange: string }).exchange)
-        : "target" in record.value
-          ? String((record.value as { target: string }).target)
-          : null;
-
-  if (!value) return false;
-
-  return wildcard.wildcardTargets.has(value);
-}
+// Record types affected by wildcard records
+const WILDCARD_AFFECTED_TYPES = new Set(["A", "AAAA", "CNAME"]);
 
 async function queryDns(
   domain: string,
@@ -283,16 +266,29 @@ export const handler = define.handlers({
       "google._domainkey",
     ]);
 
+    // Find subdomains that have CNAME records (to skip A/AAAA for those)
+    const subdomainsWithCname = new Set<string>();
+    for (const result of results) {
+      if (result.records.some((r) => r.type === "CNAME")) {
+        subdomainsWithCname.add(result.subdomain);
+      }
+    }
+
     // Flatten all records with subdomain as name
     const allRecords: Array<{ name: string; type: string; value: string | object; ttl: number }> = [];
 
     for (const result of results) {
       if (result.records.length === 0) continue;
 
-      // Filter out wildcard matches for applicable subdomains
+      // Filter out wildcard-affected record types for applicable subdomains
       let filteredRecords = result.records;
       if (wildcard.hasWildcard && wildcardFilteredSubdomains.has(result.subdomain)) {
-        filteredRecords = result.records.filter((r) => !isWildcardResult(r, wildcard));
+        filteredRecords = result.records.filter((r) => !WILDCARD_AFFECTED_TYPES.has(r.type));
+      }
+
+      // If subdomain has CNAME, only keep the CNAME record (per DNS standards, no other records should coexist)
+      if (subdomainsWithCname.has(result.subdomain)) {
+        filteredRecords = filteredRecords.filter((r) => r.type === "CNAME");
       }
 
       for (const record of filteredRecords) {
