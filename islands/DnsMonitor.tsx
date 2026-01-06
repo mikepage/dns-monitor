@@ -75,6 +75,13 @@ interface DnssecInfo {
   valid?: boolean;
 }
 
+interface CtInfo {
+  enabled: boolean;
+  totalCerts: number;
+  activeCerts: number;
+  discoveredSubdomains: number;
+}
+
 interface DnsResult {
   domain: string;
   resolver: string;
@@ -83,6 +90,7 @@ interface DnsResult {
   records: DnsRecord[];
   wildcard?: WildcardInfo;
   dnssec?: DnssecInfo;
+  ct?: CtInfo;
 }
 
 function parseHash(): string | null {
@@ -105,6 +113,7 @@ export default function DnsMonitor() {
   const domain = useSignal("");
   const resolver = useSignal<Resolver>("google");
   const dnssecValidation = useSignal(true);
+  const ctScan = useSignal(true);
   const isLoading = useSignal(false);
   const result = useSignal<DnsResult | null>(null);
   const error = useSignal<string | null>(null);
@@ -127,7 +136,9 @@ export default function DnsMonitor() {
         domain: domainValue,
         resolver: resolver.value,
         ...(dnssecValidation.value && { dnssec: "true" }),
+        ...(ctScan.value && { ct: "true" }),
       });
+
       const response = await fetch(`/api/dns?${params}`);
       const data = await response.json();
 
@@ -268,6 +279,31 @@ export default function DnsMonitor() {
               </label>
             </div>
           </div>
+          <div class="flex items-center gap-2">
+            <label class="text-xs text-[#666]" title="Query Certificate Transparency logs to discover additional subdomains from active SSL certificates">CT Scan</label>
+            <div class="flex rounded-md overflow-hidden border border-[#ddd]">
+              <label class={`px-3 py-1.5 text-xs cursor-pointer transition-colors ${!ctScan.value ? "bg-blue-600 text-white" : "bg-white text-[#666] hover:bg-[#f5f5f5]"}`}>
+                <input
+                  type="radio"
+                  name="ctscan"
+                  checked={!ctScan.value}
+                  onChange={() => (ctScan.value = false)}
+                  class="sr-only"
+                />
+                Off
+              </label>
+              <label class={`px-3 py-1.5 text-xs cursor-pointer transition-colors border-l border-[#ddd] ${ctScan.value ? "bg-blue-600 text-white" : "bg-white text-[#666] hover:bg-[#f5f5f5]"}`}>
+                <input
+                  type="radio"
+                  name="ctscan"
+                  checked={ctScan.value}
+                  onChange={() => (ctScan.value = true)}
+                  class="sr-only"
+                />
+                On
+              </label>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -311,6 +347,14 @@ export default function DnsMonitor() {
                   <span class="text-xs text-[#999] block">DNSSEC</span>
                   <span class={`text-sm ${result.value.dnssec.valid ? "text-green-600" : "text-[#999]"}`}>
                     {result.value.dnssec.valid ? "Valid" : "Not validated"}
+                  </span>
+                </div>
+              )}
+              {result.value.ct && (
+                <div>
+                  <span class="text-xs text-[#999] block">CT Scan</span>
+                  <span class="text-sm text-[#111]">
+                    +{result.value.ct.discoveredSubdomains} from {result.value.ct.activeCerts} certs
                   </span>
                 </div>
               )}
@@ -424,6 +468,7 @@ export default function DnsMonitor() {
               </>
             );
           })()}
+
         </>
       )}
     </div>

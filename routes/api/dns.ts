@@ -3,6 +3,11 @@ import { define } from "../../utils.ts";
 type RecordType = "A" | "AAAA" | "CNAME" | "MX" | "NS" | "TXT" | "SOA" | "SRV";
 type Resolver = "google" | "cloudflare";
 
+interface CrtShEntry {
+  name_value: string;
+  not_after: string;
+}
+
 interface DnsApiResponse {
   Status: number;
   AD?: boolean;
@@ -157,17 +162,28 @@ async function detectWildcard(domain: string, resolver: Resolver): Promise<Wildc
   const wildcardTargets = new Set<string>();
   let wildcardCname: string | null = null;
 
-  try {
-    const baseUrl = RESOLVER_URLS[resolver];
-    const headers: Record<string, string> = resolver === "cloudflare" ? { Accept: "application/dns-json" } : {};
-    const res = await fetch(`${baseUrl}?name=${testDomain}&type=A`, { headers });
-    const data: DnsApiResponse = await res.json();
+  const baseUrl = RESOLVER_URLS[resolver];
+  const headers: Record<string, string> = resolver === "cloudflare" ? { Accept: "application/dns-json" } : {};
 
-    if (data.Status === 0 && data.Answer) {
-      for (const a of data.Answer) {
-        const value = a.data.replace(/\.$/, "");
-        wildcardTargets.add(value);
-        if (a.type === 5) wildcardCname = value; // CNAME in chain
+  // Query A, AAAA, TXT, CAA in parallel to detect all wildcard records
+  const typesToCheck = ["A", "AAAA", "TXT", "CAA"];
+
+  try {
+    const responses = await Promise.all(
+      typesToCheck.map((type) =>
+        fetch(`${baseUrl}?name=${testDomain}&type=${type}`, { headers })
+          .then((res) => res.json())
+          .catch(() => null)
+      )
+    );
+
+    for (const data of responses) {
+      if (data?.Status === 0 && data?.Answer) {
+        for (const a of data.Answer) {
+          const value = a.data.replace(/\.$/, "").replace(/^"|"$/g, "");
+          wildcardTargets.add(value);
+          if (a.type === 5) wildcardCname = value; // CNAME in chain
+        }
       }
     }
   } catch {
@@ -178,7 +194,57 @@ async function detectWildcard(domain: string, resolver: Resolver): Promise<Wildc
 }
 
 // Record types affected by wildcard records
-const WILDCARD_AFFECTED_TYPES = new Set(["A", "AAAA", "CNAME"]);
+const WILDCARD_AFFECTED_TYPES = new Set(["A", "AAAA", "CNAME", "TXT", "CAA"]);
+
+// Fetch subdomains from Certificate Transparency logs
+async function fetchCtSubdomains(domain: string): Promise<{ subdomains: string[]; totalCerts: number; activeCerts: number }> {
+  try {
+    const crtUrl = `https://crt.sh/?q=%25.${encodeURIComponent(domain)}&output=json`;
+    const response = await fetch(crtUrl, {
+      headers: { "User-Agent": "DNS-Monitor/1.0" },
+    });
+
+    if (!response.ok) {
+      return { subdomains: [], totalCerts: 0, activeCerts: 0 };
+    }
+
+    const text = await response.text();
+    if (!text || text.trim() === "") {
+      return { subdomains: [], totalCerts: 0, activeCerts: 0 };
+    }
+
+    const entries: CrtShEntry[] = JSON.parse(text);
+    const now = new Date();
+
+    // Filter to only include certificates that haven't expired
+    const activeCerts = entries.filter((entry) => new Date(entry.not_after) > now);
+
+    // Extract unique subdomains (exclude wildcards and root domain)
+    const subdomainSet = new Set<string>();
+    for (const entry of activeCerts) {
+      const names = entry.name_value.split("\n").map((n) => n.trim().toLowerCase());
+      for (const name of names) {
+        // Skip wildcards, root domain, and invalid entries
+        if (!name || name.startsWith("*") || name === domain || !name.endsWith(`.${domain}`)) {
+          continue;
+        }
+        // Extract subdomain part (remove the .domain suffix)
+        const subdomain = name.slice(0, -(domain.length + 1));
+        if (subdomain && !subdomain.includes("@") && !subdomain.includes(" ")) {
+          subdomainSet.add(subdomain);
+        }
+      }
+    }
+
+    return {
+      subdomains: Array.from(subdomainSet),
+      totalCerts: entries.length,
+      activeCerts: activeCerts.length,
+    };
+  } catch {
+    return { subdomains: [], totalCerts: 0, activeCerts: 0 };
+  }
+}
 
 async function queryDns(
   domain: string,
@@ -249,6 +315,7 @@ export const handler = define.handlers({
     const domain = url.searchParams.get("domain");
     const resolverParam = url.searchParams.get("resolver") || "google";
     const dnssecParam = url.searchParams.get("dnssec") === "true";
+    const ctParam = url.searchParams.get("ct") === "true";
 
     const resolver: Resolver = resolverParam === "cloudflare" ? "cloudflare" : "google";
 
@@ -267,11 +334,32 @@ export const handler = define.handlers({
 
     const startTime = performance.now();
 
+    // Fetch CT subdomains first if enabled (need results before DNS queries)
+    let ctData: { subdomains: string[]; totalCerts: number; activeCerts: number } | null = null;
+    if (ctParam) {
+      ctData = await fetchCtSubdomains(cleanDomain);
+    }
+
+    // Build query list: static queries + CT-discovered subdomains
+    const queriesToRun = [...QUERIES_TO_RUN];
+
+    // Add CT-discovered subdomains (query A, AAAA, CNAME for each)
+    const staticSubdomains = new Set(QUERIES_TO_RUN.map((q) => q.subdomain));
+    const ctSubdomains: string[] = [];
+    if (ctData) {
+      for (const subdomain of ctData.subdomains) {
+        if (!staticSubdomains.has(subdomain)) {
+          queriesToRun.push({ subdomain, types: ["A", "AAAA", "CNAME"] });
+          ctSubdomains.push(subdomain);
+        }
+      }
+    }
+
     // Detect wildcard records in parallel with other queries
     const wildcardPromise = detectWildcard(cleanDomain, resolver);
 
     const queryPromises: Promise<QueryResult & { dnssecValid?: boolean }>[] = [];
-    for (const query of QUERIES_TO_RUN) {
+    for (const query of queriesToRun) {
       for (const type of query.types) {
         queryPromises.push(queryDns(cleanDomain, query.subdomain, type, resolver, dnssecParam));
       }
@@ -305,6 +393,8 @@ export const handler = define.handlers({
       "k2._domainkey",
       "k3._domainkey",
       "default._domainkey",
+      // Add CT-discovered subdomains to wildcard filter
+      ...ctSubdomains,
     ]);
 
     // Find subdomains that have CNAME records (to skip A/AAAA for those)
@@ -321,10 +411,15 @@ export const handler = define.handlers({
     for (const result of results) {
       if (result.records.length === 0) continue;
 
-      // Filter out wildcard-affected record types for applicable subdomains
+      // Filter out records that match wildcard targets (false positives)
       let filteredRecords = result.records;
       if (wildcard.hasWildcard && wildcardFilteredSubdomains.has(result.subdomain)) {
-        filteredRecords = result.records.filter((r) => !WILDCARD_AFFECTED_TYPES.has(r.type));
+        filteredRecords = result.records.filter((r) => {
+          if (!WILDCARD_AFFECTED_TYPES.has(r.type)) return true;
+          // Check if record value matches wildcard targets
+          const value = typeof r.value === "string" ? r.value : "";
+          return !wildcard.wildcardTargets.has(value);
+        });
       }
 
       // If subdomain has CNAME, only keep the CNAME record (per DNS standards, no other records should coexist)
@@ -374,6 +469,14 @@ export const handler = define.handlers({
         dnssec: {
           enabled: true,
           valid: dnssecValid,
+        },
+      }),
+      ...(ctData && {
+        ct: {
+          enabled: true,
+          totalCerts: ctData.totalCerts,
+          activeCerts: ctData.activeCerts,
+          discoveredSubdomains: ctSubdomains.length,
         },
       }),
     });
