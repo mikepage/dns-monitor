@@ -80,6 +80,7 @@ interface CtInfo {
   totalCerts: number;
   activeCerts: number;
   discoveredSubdomains: number;
+  cached: boolean;
 }
 
 interface DnsResult {
@@ -352,7 +353,7 @@ export default function DnsMonitor() {
               )}
               {result.value.ct && (
                 <div>
-                  <span class="text-xs text-[#999] block">CT Scan</span>
+                  <span class="text-xs text-[#999] block">CT Scan{result.value.ct.cached ? " (cached)" : ""}</span>
                   <span class="text-sm text-[#111]">
                     +{result.value.ct.discoveredSubdomains} from {result.value.ct.activeCerts} certs
                   </span>

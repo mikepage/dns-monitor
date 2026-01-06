@@ -1,3 +1,4 @@
+/// <reference lib="deno.unstable" />
 import { define } from "../../utils.ts";
 
 type RecordType = "A" | "AAAA" | "CNAME" | "MX" | "NS" | "TXT" | "SOA" | "SRV";
@@ -196,8 +197,49 @@ async function detectWildcard(domain: string, resolver: Resolver): Promise<Wildc
 // Record types affected by wildcard records
 const WILDCARD_AFFECTED_TYPES = new Set(["A", "AAAA", "CNAME", "TXT", "CAA"]);
 
-// Fetch subdomains from Certificate Transparency logs
-async function fetchCtSubdomains(domain: string): Promise<{ subdomains: string[]; totalCerts: number; activeCerts: number }> {
+// Deno KV for caching CT results (works in Deno Deploy)
+let kv: Deno.Kv | null = null;
+async function getKv(): Promise<Deno.Kv | null> {
+  if (kv) return kv;
+  try {
+    kv = await Deno.openKv();
+    return kv;
+  } catch {
+    return null;
+  }
+}
+
+const CT_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+
+interface CtCacheEntry {
+  subdomains: string[];
+  totalCerts: number;
+  activeCerts: number;
+  cachedAt: number;
+}
+
+// Fetch subdomains from Certificate Transparency logs (with caching)
+async function fetchCtSubdomains(domain: string): Promise<{ subdomains: string[]; totalCerts: number; activeCerts: number; cached?: boolean }> {
+  const cacheKey = ["ct", domain];
+
+  // Try to get from cache
+  try {
+    const store = await getKv();
+    if (store) {
+      const cached = await store.get<CtCacheEntry>(cacheKey);
+      if (cached.value && Date.now() - cached.value.cachedAt < CT_CACHE_TTL_MS) {
+        return {
+          subdomains: cached.value.subdomains,
+          totalCerts: cached.value.totalCerts,
+          activeCerts: cached.value.activeCerts,
+          cached: true,
+        };
+      }
+    }
+  } catch {
+    // Cache read failed, continue to fetch
+  }
+
   try {
     const crtUrl = `https://crt.sh/?q=%25.${encodeURIComponent(domain)}&output=json`;
     const response = await fetch(crtUrl, {
@@ -236,11 +278,23 @@ async function fetchCtSubdomains(domain: string): Promise<{ subdomains: string[]
       }
     }
 
-    return {
+    const result = {
       subdomains: Array.from(subdomainSet),
       totalCerts: entries.length,
       activeCerts: activeCerts.length,
     };
+
+    // Store in cache
+    try {
+      const store = await getKv();
+      if (store) {
+        await store.set(cacheKey, { ...result, cachedAt: Date.now() } as CtCacheEntry);
+      }
+    } catch {
+      // Cache write failed, ignore
+    }
+
+    return result;
   } catch {
     return { subdomains: [], totalCerts: 0, activeCerts: 0 };
   }
@@ -335,7 +389,7 @@ export const handler = define.handlers({
     const startTime = performance.now();
 
     // Fetch CT subdomains first if enabled (need results before DNS queries)
-    let ctData: { subdomains: string[]; totalCerts: number; activeCerts: number } | null = null;
+    let ctData: { subdomains: string[]; totalCerts: number; activeCerts: number; cached?: boolean } | null = null;
     if (ctParam) {
       ctData = await fetchCtSubdomains(cleanDomain);
     }
@@ -477,6 +531,7 @@ export const handler = define.handlers({
           totalCerts: ctData.totalCerts,
           activeCerts: ctData.activeCerts,
           discoveredSubdomains: ctSubdomains.length,
+          cached: ctData.cached || false,
         },
       }),
     });
