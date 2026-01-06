@@ -68,6 +68,11 @@ const QUERIES_TO_RUN: Array<{ subdomain: string; types: RecordType[] }> = [
   { subdomain: "selector1._domainkey", types: ["TXT", "CNAME"] },
   { subdomain: "selector2._domainkey", types: ["TXT", "CNAME"] },
   { subdomain: "google._domainkey", types: ["TXT", "CNAME"] },
+  { subdomain: "s1._domainkey", types: ["TXT", "CNAME"] },
+  { subdomain: "s2._domainkey", types: ["TXT", "CNAME"] },
+  { subdomain: "k2._domainkey", types: ["TXT", "CNAME"] },
+  { subdomain: "k3._domainkey", types: ["TXT", "CNAME"] },
+  { subdomain: "default._domainkey", types: ["TXT", "CNAME"] },
   { subdomain: "_dkim", types: ["TXT"] },
   { subdomain: "_domainkey", types: ["TXT"] },
 ];
@@ -264,6 +269,11 @@ export const handler = define.handlers({
       "selector1._domainkey",
       "selector2._domainkey",
       "google._domainkey",
+      "s1._domainkey",
+      "s2._domainkey",
+      "k2._domainkey",
+      "k3._domainkey",
+      "default._domainkey",
     ]);
 
     // Find subdomains that have CNAME records (to skip A/AAAA for those)
