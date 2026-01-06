@@ -46,7 +46,13 @@ interface WildcardInfo {
 }
 
 const QUERIES_TO_RUN: Array<{ subdomain: string; types: RecordType[] }> = [
-  { subdomain: "@", types: ["A", "AAAA", "TXT", "MX", "NS", "SOA"] },
+  // Root domain
+  { subdomain: "@", types: ["A", "AAAA", "TXT", "MX", "SOA"] },
+
+  // Nameservers
+  { subdomain: "@", types: ["NS"] },
+
+  // Common subdomains
   { subdomain: "www", types: ["A", "AAAA", "CNAME"] },
   { subdomain: "mail", types: ["A", "AAAA", "CNAME"] },
   { subdomain: "ftp", types: ["A", "AAAA", "CNAME"] },
@@ -54,17 +60,25 @@ const QUERIES_TO_RUN: Array<{ subdomain: string; types: RecordType[] }> = [
   { subdomain: "pop", types: ["A", "AAAA", "CNAME"] },
   { subdomain: "imap", types: ["A", "AAAA", "CNAME"] },
   { subdomain: "webmail", types: ["A", "AAAA", "CNAME"] },
+
+  // Email authentication
   { subdomain: "_dmarc", types: ["TXT"] },
+  { subdomain: "_mta-sts", types: ["TXT"] },
+  { subdomain: "_smtp._tls", types: ["TXT"] },
+
+  // Microsoft 365
   { subdomain: "autodiscover", types: ["CNAME", "A"] },
-  { subdomain: "autoconfig", types: ["CNAME", "A"] },
   { subdomain: "lyncdiscover", types: ["CNAME", "A"] },
   { subdomain: "sip", types: ["CNAME", "A"] },
   { subdomain: "enterpriseregistration", types: ["CNAME"] },
   { subdomain: "enterpriseenrollment", types: ["CNAME"] },
   { subdomain: "_sipfederationtls._tcp", types: ["SRV"] },
   { subdomain: "_sip._tls", types: ["SRV"] },
-  { subdomain: "_mta-sts", types: ["TXT"] },
-  { subdomain: "_smtp._tls", types: ["TXT"] },
+
+  // Other providers
+  { subdomain: "autoconfig", types: ["CNAME", "A"] },
+
+  // DKIM selectors
   { subdomain: "selector1._domainkey", types: ["TXT", "CNAME"] },
   { subdomain: "selector2._domainkey", types: ["TXT", "CNAME"] },
   { subdomain: "google._domainkey", types: ["TXT", "CNAME"] },
