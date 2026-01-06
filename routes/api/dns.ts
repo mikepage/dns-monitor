@@ -1,8 +1,9 @@
 import { define } from "../../utils.ts";
 
 type RecordType = "A" | "AAAA" | "CNAME" | "MX" | "NS" | "TXT" | "SOA" | "SRV";
+type Resolver = "google" | "cloudflare";
 
-interface GoogleDnsResponse {
+interface DnsApiResponse {
   Status: number;
   AD?: boolean;
   CD?: boolean;
@@ -13,6 +14,11 @@ interface GoogleDnsResponse {
     data: string;
   }>;
 }
+
+const RESOLVER_URLS: Record<Resolver, string> = {
+  google: "https://dns.google/resolve",
+  cloudflare: "https://cloudflare-dns.com/dns-query",
+};
 
 const DNS_TYPE_MAP: Record<string, number> = {
   A: 1,
@@ -146,14 +152,16 @@ function parseRecord(
   };
 }
 
-async function detectWildcard(domain: string): Promise<WildcardInfo> {
+async function detectWildcard(domain: string, resolver: Resolver): Promise<WildcardInfo> {
   const testDomain = `_wildcard-test-${Date.now()}.${domain}`;
   const wildcardTargets = new Set<string>();
   let wildcardCname: string | null = null;
 
   try {
-    const res = await fetch(`https://dns.google/resolve?name=${testDomain}&type=A`);
-    const data: GoogleDnsResponse = await res.json();
+    const baseUrl = RESOLVER_URLS[resolver];
+    const headers: Record<string, string> = resolver === "cloudflare" ? { Accept: "application/dns-json" } : {};
+    const res = await fetch(`${baseUrl}?name=${testDomain}&type=A`, { headers });
+    const data: DnsApiResponse = await res.json();
 
     if (data.Status === 0 && data.Answer) {
       for (const a of data.Answer) {
@@ -175,19 +183,24 @@ const WILDCARD_AFFECTED_TYPES = new Set(["A", "AAAA", "CNAME"]);
 async function queryDns(
   domain: string,
   subdomain: string,
-  type: RecordType
-): Promise<QueryResult> {
+  type: RecordType,
+  resolver: Resolver,
+  requestDnssec: boolean
+): Promise<QueryResult & { dnssecValid?: boolean }> {
   const fullDomain = subdomain === "@" ? domain : `${subdomain}.${domain}`;
   const typeNum = DNS_TYPE_MAP[type];
 
   try {
+    const baseUrl = RESOLVER_URLS[resolver];
     const params = new URLSearchParams({
       name: fullDomain,
       type: typeNum.toString(),
+      ...(requestDnssec && { do: "true" }), // Request DNSSEC OK bit
     });
-    const url = `https://dns.google/resolve?${params}`;
+    const url = `${baseUrl}?${params}`;
+    const headers: Record<string, string> = resolver === "cloudflare" ? { Accept: "application/dns-json" } : {};
 
-    const response = await fetch(url);
+    const response = await fetch(url, { headers });
     if (!response.ok) {
       return {
         subdomain,
@@ -197,7 +210,7 @@ async function queryDns(
       };
     }
 
-    const data: GoogleDnsResponse = await response.json();
+    const data: DnsApiResponse = await response.json();
 
     if (data.Status !== 0) {
       if (data.Status === 3) {
@@ -219,7 +232,7 @@ async function queryDns(
       parseRecord(a, type)
     );
 
-    return { subdomain, type, records };
+    return { subdomain, type, records, dnssecValid: data.AD };
   } catch (err) {
     return {
       subdomain,
@@ -234,6 +247,10 @@ export const handler = define.handlers({
   async GET(ctx) {
     const url = new URL(ctx.req.url);
     const domain = url.searchParams.get("domain");
+    const resolverParam = url.searchParams.get("resolver") || "google";
+    const dnssecParam = url.searchParams.get("dnssec") === "true";
+
+    const resolver: Resolver = resolverParam === "cloudflare" ? "cloudflare" : "google";
 
     if (!domain) {
       return Response.json(
@@ -251,12 +268,12 @@ export const handler = define.handlers({
     const startTime = performance.now();
 
     // Detect wildcard records in parallel with other queries
-    const wildcardPromise = detectWildcard(cleanDomain);
+    const wildcardPromise = detectWildcard(cleanDomain, resolver);
 
-    const queryPromises: Promise<QueryResult>[] = [];
+    const queryPromises: Promise<QueryResult & { dnssecValid?: boolean }>[] = [];
     for (const query of QUERIES_TO_RUN) {
       for (const type of query.types) {
-        queryPromises.push(queryDns(cleanDomain, query.subdomain, type));
+        queryPromises.push(queryDns(cleanDomain, query.subdomain, type, resolver, dnssecParam));
       }
     }
 
@@ -336,9 +353,13 @@ export const handler = define.handlers({
     const endTime = performance.now();
     const queryTime = Math.round(endTime - startTime);
 
+    // Check if any result has DNSSEC validated (AD flag)
+    const dnssecValid = dnssecParam && results.some((r) => r.dnssecValid === true);
+
     return Response.json({
       success: true,
       domain: cleanDomain,
+      resolver,
       queryTime,
       records: allRecords,
       totalRecords: allRecords.length,
@@ -347,6 +368,12 @@ export const handler = define.handlers({
           detected: true,
           cname: wildcard.wildcardCname,
           targets: Array.from(wildcard.wildcardTargets),
+        },
+      }),
+      ...(dnssecParam && {
+        dnssec: {
+          enabled: true,
+          valid: dnssecValid,
         },
       }),
     });

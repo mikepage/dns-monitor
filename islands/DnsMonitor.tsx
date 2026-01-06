@@ -70,12 +70,19 @@ interface WildcardInfo {
   targets: string[];
 }
 
+interface DnssecInfo {
+  enabled: boolean;
+  valid?: boolean;
+}
+
 interface DnsResult {
   domain: string;
+  resolver: string;
   queryTime: number;
   totalRecords: number;
   records: DnsRecord[];
   wildcard?: WildcardInfo;
+  dnssec?: DnssecInfo;
 }
 
 function parseHash(): string | null {
@@ -92,8 +99,12 @@ function updateHash(domain: string) {
   }
 }
 
+type Resolver = "google" | "cloudflare";
+
 export default function DnsMonitor() {
   const domain = useSignal("");
+  const resolver = useSignal<Resolver>("google");
+  const dnssecValidation = useSignal(false);
   const isLoading = useSignal(false);
   const result = useSignal<DnsResult | null>(null);
   const error = useSignal<string | null>(null);
@@ -112,7 +123,11 @@ export default function DnsMonitor() {
     isLoading.value = true;
 
     try {
-      const params = new URLSearchParams({ domain: domainValue });
+      const params = new URLSearchParams({
+        domain: domainValue,
+        resolver: resolver.value,
+        ...(dnssecValidation.value && { dnssec: "true" }),
+      });
       const response = await fetch(`/api/dns?${params}`);
       const data = await response.json();
 
@@ -185,7 +200,7 @@ export default function DnsMonitor() {
   return (
     <div class="w-full">
       <div class="bg-white rounded-lg shadow p-6 mb-6">
-        <div class="flex flex-col md:flex-row gap-3">
+        <div class="flex flex-col md:flex-row gap-3 mb-4">
           <div class="flex-1">
             <input
               type="text"
@@ -216,6 +231,28 @@ export default function DnsMonitor() {
             )}
           </div>
         </div>
+        <div class="flex flex-wrap items-center gap-4">
+          <div class="flex items-center gap-2">
+            <label class="text-xs text-[#666]">Resolver</label>
+            <select
+              value={resolver.value}
+              onChange={(e) => (resolver.value = (e.target as HTMLSelectElement).value as Resolver)}
+              class="px-3 py-1.5 border border-[#ddd] rounded-md text-sm bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            >
+              <option value="google">Google</option>
+              <option value="cloudflare">Cloudflare</option>
+            </select>
+          </div>
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={dnssecValidation.value}
+              onChange={(e) => (dnssecValidation.value = (e.target as HTMLInputElement).checked)}
+              class="w-4 h-4 text-blue-600 border-[#ddd] rounded focus:ring-blue-500"
+            />
+            <span class="text-xs text-[#666]">DNSSEC Validation</span>
+          </label>
+        </div>
       </div>
 
       {error.value && (
@@ -242,6 +279,10 @@ export default function DnsMonitor() {
                 <span class="text-sm text-[#111]">{result.value.domain}</span>
               </div>
               <div>
+                <span class="text-xs text-[#999] block">Resolver</span>
+                <span class="text-sm text-[#111] capitalize">{result.value.resolver}</span>
+              </div>
+              <div>
                 <span class="text-xs text-[#999] block">Records Found</span>
                 <span class="text-sm text-[#111]">{result.value.totalRecords}</span>
               </div>
@@ -249,6 +290,14 @@ export default function DnsMonitor() {
                 <span class="text-xs text-[#999] block">Query Time</span>
                 <span class="text-sm text-[#111]">{result.value.queryTime}ms</span>
               </div>
+              {result.value.dnssec && (
+                <div>
+                  <span class="text-xs text-[#999] block">DNSSEC</span>
+                  <span class={`text-sm ${result.value.dnssec.valid ? "text-green-600" : "text-[#999]"}`}>
+                    {result.value.dnssec.valid ? "Valid" : "Not validated"}
+                  </span>
+                </div>
+              )}
             </div>
           </div>
 
@@ -274,44 +323,91 @@ export default function DnsMonitor() {
             </div>
           )}
 
-          {result.value.records.length > 0 ? (
-            <div class="bg-white rounded-lg shadow overflow-hidden">
-              <table class="w-full text-sm">
-                <thead>
-                  <tr class="border-b border-[#eee] bg-[#fafafa]">
-                    <th class="text-left px-4 py-3 text-xs font-medium text-[#666] uppercase tracking-wider">Name</th>
-                    <th class="text-left px-4 py-3 text-xs font-medium text-[#666] uppercase tracking-wider">Type</th>
-                    <th class="text-left px-4 py-3 text-xs font-medium text-[#666] uppercase tracking-wider">Value</th>
-                    <th class="text-right px-4 py-3 text-xs font-medium text-[#666] uppercase tracking-wider">TTL</th>
-                  </tr>
-                </thead>
-                <tbody class="divide-y divide-[#eee]">
-                  {result.value.records.map((record, idx) => {
-                    const formattedValue = formatValue(record.value);
-                    return (
-                      <tr key={idx} class="hover:bg-[#fafafa]">
-                        <td class="px-4 py-3 text-[#111]">{record.name}</td>
-                        <td class="px-4 py-3">
-                          <span class={`text-xs px-2 py-0.5 rounded ${TYPE_COLORS[record.type]?.bg ?? "bg-[#e5e5e5]"} ${TYPE_COLORS[record.type]?.text ?? "text-[#666]"}`}>{record.type}</span>
-                        </td>
-                        <td class="px-4 py-3">
-                          <div class="flex items-center gap-2">
-                            <code class="text-[#111] break-all flex-1">{formattedValue}</code>
-                            <CopyButton text={formattedValue} id={`record-${idx}`} />
-                          </div>
-                        </td>
-                        <td class="px-4 py-3 text-right text-[#999]">{record.ttl}s</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <div class="bg-white rounded-lg shadow p-6">
-              <p class="text-sm text-[#666]">No DNS records found for this domain.</p>
-            </div>
-          )}
+          {(() => {
+            const mainRecords = result.value.records.filter((r) => r.type !== "NS" && r.type !== "SOA");
+            const nssoaRecords = result.value.records.filter((r) => r.type === "NS" || r.type === "SOA");
+
+            return (
+              <>
+                {mainRecords.length > 0 ? (
+                  <div class="bg-white rounded-lg shadow overflow-hidden">
+                    <table class="w-full text-sm">
+                      <thead>
+                        <tr class="border-b border-[#eee] bg-[#fafafa]">
+                          <th class="text-left px-4 py-3 text-xs font-medium text-[#666] uppercase tracking-wider">Name</th>
+                          <th class="text-left px-4 py-3 text-xs font-medium text-[#666] uppercase tracking-wider">Type</th>
+                          <th class="text-left px-4 py-3 text-xs font-medium text-[#666] uppercase tracking-wider">Value</th>
+                          <th class="text-right px-4 py-3 text-xs font-medium text-[#666] uppercase tracking-wider">TTL</th>
+                        </tr>
+                      </thead>
+                      <tbody class="divide-y divide-[#eee]">
+                        {mainRecords.map((record, idx) => {
+                          const formattedValue = formatValue(record.value);
+                          return (
+                            <tr key={idx} class="hover:bg-[#fafafa]">
+                              <td class="px-4 py-3 text-[#111]">{record.name}</td>
+                              <td class="px-4 py-3">
+                                <span class={`text-xs px-2 py-0.5 rounded ${TYPE_COLORS[record.type]?.bg ?? "bg-[#e5e5e5]"} ${TYPE_COLORS[record.type]?.text ?? "text-[#666]"}`}>{record.type}</span>
+                              </td>
+                              <td class="px-4 py-3">
+                                <div class="flex items-center gap-2">
+                                  <code class="text-[#111] break-all flex-1">{formattedValue}</code>
+                                  <CopyButton text={formattedValue} id={`record-${idx}`} />
+                                </div>
+                              </td>
+                              <td class="px-4 py-3 text-right text-[#999]">{record.ttl}s</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div class="bg-white rounded-lg shadow p-6">
+                    <p class="text-sm text-[#666]">No DNS records found for this domain.</p>
+                  </div>
+                )}
+
+                {nssoaRecords.length > 0 && (
+                  <div class="bg-white rounded-lg shadow overflow-hidden mt-6">
+                    <div class="px-4 py-3 bg-[#fafafa] border-b border-[#eee]">
+                      <h3 class="text-xs font-medium text-[#666] uppercase tracking-wider">NS / SOA Records</h3>
+                    </div>
+                    <table class="w-full text-sm">
+                      <thead>
+                        <tr class="border-b border-[#eee] bg-[#fafafa]">
+                          <th class="text-left px-4 py-3 text-xs font-medium text-[#666] uppercase tracking-wider">Name</th>
+                          <th class="text-left px-4 py-3 text-xs font-medium text-[#666] uppercase tracking-wider">Type</th>
+                          <th class="text-left px-4 py-3 text-xs font-medium text-[#666] uppercase tracking-wider">Value</th>
+                          <th class="text-right px-4 py-3 text-xs font-medium text-[#666] uppercase tracking-wider">TTL</th>
+                        </tr>
+                      </thead>
+                      <tbody class="divide-y divide-[#eee]">
+                        {nssoaRecords.map((record, idx) => {
+                          const formattedValue = formatValue(record.value);
+                          return (
+                            <tr key={idx} class="hover:bg-[#fafafa]">
+                              <td class="px-4 py-3 text-[#111]">{record.name}</td>
+                              <td class="px-4 py-3">
+                                <span class={`text-xs px-2 py-0.5 rounded ${TYPE_COLORS[record.type]?.bg ?? "bg-[#e5e5e5]"} ${TYPE_COLORS[record.type]?.text ?? "text-[#666]"}`}>{record.type}</span>
+                              </td>
+                              <td class="px-4 py-3">
+                                <div class="flex items-center gap-2">
+                                  <code class="text-[#111] break-all flex-1">{formattedValue}</code>
+                                  <CopyButton text={formattedValue} id={`nssoa-${idx}`} />
+                                </div>
+                              </td>
+                              <td class="px-4 py-3 text-right text-[#999]">{record.ttl}s</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </>
+            );
+          })()}
         </>
       )}
     </div>

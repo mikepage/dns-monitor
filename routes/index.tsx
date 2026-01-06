@@ -14,9 +14,8 @@ export default define.page(function Home() {
             DNS Monitor
           </h1>
           <p class="text-[#666] text-sm mb-8">
-            Automatically scan all common DNS records for any domain. Includes
-            root records, mail configuration, Microsoft 365, and security
-            records.
+            Scan common DNS records for any domain including root, mail, and
+            security configurations.
           </p>
           <DnsMonitor />
         </div>
