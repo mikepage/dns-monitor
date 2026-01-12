@@ -99,9 +99,19 @@ const QUERIES_TO_RUN: Array<{ subdomain: string; types: RecordType[] }> = [
   { subdomain: "k2._domainkey", types: ["TXT", "CNAME"] },
   { subdomain: "k3._domainkey", types: ["TXT", "CNAME"] },
   { subdomain: "default._domainkey", types: ["TXT", "CNAME"] },
+  { subdomain: "transip-a._domainkey", types: ["TXT", "CNAME"] },
+  { subdomain: "transip-b._domainkey", types: ["TXT", "CNAME"] },
+  { subdomain: "transip-c._domainkey", types: ["TXT", "CNAME"] },
+  { subdomain: "x-transip-mail-auth", types: ["TXT", "CNAME"] },
   { subdomain: "_dkim", types: ["TXT"] },
   { subdomain: "_domainkey", types: ["TXT"] },
 ];
+
+// Subdomains that should be filtered when matching wildcard DNS
+// Excludes root (@) and underscore-prefixed records (technical DNS records)
+const WILDCARD_FILTERED_SUBDOMAINS = QUERIES_TO_RUN
+  .map((q) => q.subdomain)
+  .filter((s) => s !== "@" && !s.startsWith("_"));
 
 function parseRecord(
   answer: { name: string; type: number; TTL: number; data: string },
@@ -426,27 +436,7 @@ export const handler = define.handlers({
 
     // Subdomains that should be filtered if they match wildcard
     const wildcardFilteredSubdomains = new Set([
-      "www",
-      "mail",
-      "ftp",
-      "smtp",
-      "pop",
-      "imap",
-      "webmail",
-      "autodiscover",
-      "autoconfig",
-      "lyncdiscover",
-      "sip",
-      "enterpriseregistration",
-      "enterpriseenrollment",
-      "selector1._domainkey",
-      "selector2._domainkey",
-      "google._domainkey",
-      "s1._domainkey",
-      "s2._domainkey",
-      "k2._domainkey",
-      "k3._domainkey",
-      "default._domainkey",
+      ...WILDCARD_FILTERED_SUBDOMAINS,
       // Add CT-discovered subdomains to wildcard filter
       ...ctSubdomains,
     ]);
