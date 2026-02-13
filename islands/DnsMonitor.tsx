@@ -182,6 +182,70 @@ export default function DnsMonitor() {
     return () => window.removeEventListener("hashchange", handleHashChange);
   }, []);
 
+  const handleExport = () => {
+    if (!result.value) return;
+
+    const data = result.value;
+    const now = new Date();
+    const timestamp = now.toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    const filename = `${data.domain}_${timestamp}.txt`;
+
+    const lines: string[] = [];
+    lines.push(`; Zone file for ${data.domain}`);
+    lines.push(`; Exported from DNS Monitor on ${now.toISOString()}`);
+    lines.push(`; Resolver: ${data.resolver}`);
+    if (data.dnssec?.valid) lines.push(`; DNSSEC: Valid`);
+    lines.push(`;`);
+    lines.push(`$ORIGIN ${data.domain}.`);
+    lines.push(``);
+
+    const formatZoneValue = (record: DnsRecord): string => {
+      const val = record.value;
+      if (typeof val === "string") {
+        if (record.type === "TXT") return `"${val}"`;
+        if (["CNAME", "NS"].includes(record.type)) return val.endsWith(".") ? val : `${val}.`;
+        return val;
+      }
+      if (typeof val === "object" && val !== null) {
+        const obj = val as Record<string, unknown>;
+        if ("preference" in obj && "exchange" in obj) {
+          const ex = String(obj.exchange);
+          return `${obj.preference} ${ex.endsWith(".") ? ex : ex + "."}`;
+        }
+        if ("mname" in obj) {
+          const soa = obj as { mname: string; rname: string; serial: number; refresh: number; retry: number; expire: number; minimum: number };
+          const mn = soa.mname.endsWith(".") ? soa.mname : `${soa.mname}.`;
+          const rn = soa.rname.endsWith(".") ? soa.rname : `${soa.rname}.`;
+          return `${mn} ${rn} ${soa.serial} ${soa.refresh} ${soa.retry} ${soa.expire} ${soa.minimum}`;
+        }
+        if ("priority" in obj && "target" in obj) {
+          const tgt = String(obj.target);
+          return `${obj.priority} ${obj.weight} ${obj.port} ${tgt.endsWith(".") ? tgt : tgt + "."}`;
+        }
+      }
+      return String(val);
+    };
+
+    const formatName = (name: string): string => {
+      if (name === data.domain || name === "@") return "@";
+      if (name.endsWith(`.${data.domain}`)) return name.slice(0, -(data.domain.length + 1));
+      return name;
+    };
+
+    for (const record of data.records) {
+      const name = formatName(record.name);
+      lines.push(`${name}\t${record.ttl}\tIN\t${record.type}\t${formatZoneValue(record)}`);
+    }
+
+    const blob = new Blob([lines.join("\n") + "\n"], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const formatValue = (value: string | object): string => {
     if (typeof value === "string") return value;
     if (typeof value === "object" && value !== null) {
@@ -359,6 +423,18 @@ export default function DnsMonitor() {
                   </span>
                 </div>
               )}
+              <div class="ml-auto">
+                <button
+                  onClick={handleExport}
+                  class="flex items-center gap-1.5 px-3 py-1.5 bg-[#f0f0f0] text-[#666] rounded-md hover:bg-[#e5e5e5] transition-colors text-sm"
+                  title="Export as zone file"
+                >
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                  Export
+                </button>
+              </div>
             </div>
           </div>
 
